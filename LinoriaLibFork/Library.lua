@@ -273,8 +273,12 @@ function Library:OnHighlight(HighlightInstance, Instance, Properties, Properties
     end)
 end;
 
-function Library:MouseIsOverOpenedFrame()
+function Library:MouseIsOverOpenedFrame(IgnoreFrame)
     for Frame, _ in next, Library.OpenedFrames do
+        if IgnoreFrame and (Frame == IgnoreFrame or IgnoreFrame:IsDescendantOf(Frame)) then
+            continue;
+        end;
+
         local AbsPos, AbsSize = Frame.AbsolutePosition, Frame.AbsoluteSize;
 
         if Mouse.X >= AbsPos.X and Mouse.X <= AbsPos.X + AbsSize.X
@@ -1403,6 +1407,221 @@ do
         return Label;
     end;
 
+    -- Alias & enhanced TextLabel support (supports optional Idx + Info table or (Text, DoesWrap))
+    function Funcs:AddTextLabel(...)
+        local Args = { ... };
+        if type(Args[1]) == 'table' then
+            local Info = Args[1];
+            local Label = self:AddLabel(Info.Text or '', Info.DoesWrap or Info.Wrapped or false);
+            if Info.Color then
+                Library:RemoveFromRegistry(Label.TextLabel);
+                Label.TextLabel.TextColor3 = Info.Color;
+            end;
+            if Info.TextSize then
+                Label.TextLabel.TextSize = Info.TextSize;
+            end;
+            return Label;
+        elseif type(Args[2]) == 'table' then
+            local Idx, Info = Args[1], Args[2];
+            local Label = self:AddLabel(Info.Text or '', Info.DoesWrap or Info.Wrapped or false);
+            if Info.Color then
+                Library:RemoveFromRegistry(Label.TextLabel);
+                Label.TextLabel.TextColor3 = Info.Color;
+            end;
+            if Info.TextSize then
+                Label.TextLabel.TextSize = Info.TextSize;
+            end;
+            Options[Idx] = Label;
+            return Label;
+        else
+            return self:AddLabel(Args[1] or '', Args[2] or false);
+        end;
+    end;
+
+    -- Multi-line scrollable TextBox (ideal for pasting/typing JSON or long configs)
+    function Funcs:AddTextBox(Idx, Info)
+        if type(Idx) == 'table' then
+            Info = Idx;
+            Idx = nil;
+        end;
+        Info = Info or {};
+
+        local TextBoxObj = {
+            Value = Info.Default or '';
+            Type = 'TextBox';
+            Callback = Info.Callback or function(Value) end;
+        };
+
+        local Groupbox = self;
+        local Container = Groupbox.Container;
+
+        if Info.Text and Info.Text ~= '' then
+            Library:CreateLabel({
+                Size = UDim2.new(1, 0, 0, 15);
+                TextSize = 14;
+                Text = Info.Text;
+                TextXAlignment = Enum.TextXAlignment.Left;
+                ZIndex = Groupbox.BaseZIndex or 5;
+                Parent = Container;
+            });
+
+            Groupbox:AddBlank(2);
+        end;
+
+        local Height = Info.Height or 120;
+        local BaseZ = Groupbox.BaseZIndex or 5;
+
+        local BoxOuter = Library:Create('Frame', {
+            BackgroundColor3 = Color3.new(0, 0, 0);
+            BorderColor3 = Color3.new(0, 0, 0);
+            Size = UDim2.new(1, -4, 0, Height);
+            ZIndex = BaseZ;
+            Parent = Container;
+        });
+
+        local BoxInner = Library:Create('Frame', {
+            BackgroundColor3 = Library.MainColor;
+            BorderColor3 = Library.OutlineColor;
+            BorderMode = Enum.BorderMode.Inset;
+            Size = UDim2.new(1, 0, 1, 0);
+            ZIndex = BaseZ + 1;
+            Parent = BoxOuter;
+        });
+
+        Library:AddToRegistry(BoxInner, {
+            BackgroundColor3 = 'MainColor';
+            BorderColor3 = 'OutlineColor';
+        });
+
+        Library:OnHighlight(BoxOuter, BoxOuter,
+            { BorderColor3 = 'AccentColor' },
+            { BorderColor3 = 'Black' }
+        );
+
+        if type(Info.Tooltip) == 'string' then
+            Library:AddToolTip(Info.Tooltip, BoxOuter);
+        end;
+
+        local ScrollFrame = Library:Create('ScrollingFrame', {
+            BackgroundTransparency = 1;
+            BorderSizePixel = 0;
+            Position = UDim2.new(0, 4, 0, 4);
+            Size = UDim2.new(1, -8, 1, -8);
+            CanvasSize = UDim2.new(0, 0, 0, 0);
+            ScrollBarThickness = 3;
+            ScrollBarImageColor3 = Library.AccentColor;
+            TopImage = 'rbxasset://textures/ui/Scroll/scroll-middle.png';
+            BottomImage = 'rbxasset://textures/ui/Scroll/scroll-middle.png';
+            ZIndex = BaseZ + 2;
+            Parent = BoxInner;
+        });
+
+        Library:AddToRegistry(ScrollFrame, {
+            ScrollBarImageColor3 = 'AccentColor';
+        });
+
+        local Box = Library:Create('TextBox', {
+            BackgroundTransparency = 1;
+            Position = UDim2.new(0, 0, 0, 0);
+            Size = UDim2.new(1, -6, 1, 0);
+            Font = Library.Font;
+            PlaceholderColor3 = Color3.fromRGB(160, 160, 160);
+            PlaceholderText = Info.Placeholder or 'Paste or type text here...';
+            Text = Info.Default or '';
+            TextColor3 = Library.FontColor;
+            TextSize = Info.TextSize or 14;
+            TextWrapped = true;
+            MultiLine = true;
+            ClearTextOnFocus = Info.ClearTextOnFocus or false;
+            TextXAlignment = Enum.TextXAlignment.Left;
+            TextYAlignment = Enum.TextYAlignment.Top;
+            ZIndex = BaseZ + 3;
+            Parent = ScrollFrame;
+        });
+
+        Library:ApplyTextStroke(Box);
+        Library:AddToRegistry(Box, {
+            TextColor3 = 'FontColor';
+        });
+
+        local function UpdateCanvas()
+            local WrapWidth = math.max(ScrollFrame.AbsoluteSize.X - 6, 50);
+            local Bounds = TextService:GetTextSize(
+                Box.Text == '' and ' ' or Box.Text,
+                Box.TextSize,
+                Box.Font,
+                Vector2.new(WrapWidth, math.huge)
+            );
+            local ContentH = math.max(Bounds.Y + 12, ScrollFrame.AbsoluteSize.Y);
+            Box.Size = UDim2.new(1, -6, 0, ContentH);
+            ScrollFrame.CanvasSize = UDim2.new(0, 0, 0, ContentH);
+        end;
+
+        Box:GetPropertyChangedSignal('Text'):Connect(function()
+            if Info.MaxLength and #Box.Text > Info.MaxLength then
+                Box.Text = Box.Text:sub(1, Info.MaxLength);
+                return;
+            end;
+
+            TextBoxObj.Value = Box.Text;
+            UpdateCanvas();
+
+            if not Info.Finished then
+                Library:SafeCallback(TextBoxObj.Callback, TextBoxObj.Value);
+                Library:SafeCallback(TextBoxObj.Changed, TextBoxObj.Value);
+            end;
+        end);
+
+        Box.FocusLost:Connect(function(EnterPressed)
+            if Info.Finished then
+                TextBoxObj.Value = Box.Text;
+                Library:SafeCallback(TextBoxObj.Callback, TextBoxObj.Value);
+                Library:SafeCallback(TextBoxObj.Changed, TextBoxObj.Value);
+            end;
+            Library:AttemptSave();
+        end);
+
+        ScrollFrame:GetPropertyChangedSignal('AbsoluteSize'):Connect(UpdateCanvas);
+        task.spawn(UpdateCanvas);
+
+        function TextBoxObj:SetValue(Text)
+            Text = tostring(Text or '');
+            if Info.MaxLength and #Text > Info.MaxLength then
+                Text = Text:sub(1, Info.MaxLength);
+            end;
+            TextBoxObj.Value = Text;
+            Box.Text = Text;
+            UpdateCanvas();
+            Library:SafeCallback(TextBoxObj.Callback, TextBoxObj.Value);
+            Library:SafeCallback(TextBoxObj.Changed, TextBoxObj.Value);
+        end;
+
+        function TextBoxObj:GetValue()
+            return Box.Text;
+        end;
+
+        function TextBoxObj:OnChanged(Func)
+            TextBoxObj.Changed = Func;
+            Func(TextBoxObj.Value);
+        end;
+
+        function TextBoxObj:Focus()
+            Box:CaptureFocus();
+        end;
+
+        TextBoxObj.Box = Box;
+        TextBoxObj.Outer = BoxOuter;
+
+        Groupbox:AddBlank(5);
+        Groupbox:Resize();
+
+        if Idx then
+            Options[Idx] = TextBoxObj;
+        end;
+
+        return TextBoxObj;
+    end;
+
     function Funcs:AddButton(...)
         -- TODO: Eventually redo this
         local Button = {};
@@ -1496,7 +1715,7 @@ do
             end
 
             local function ValidateClick(Input)
-                if Library:MouseIsOverOpenedFrame() then
+                if Library:MouseIsOverOpenedFrame(Button.Outer) then
                     return false
                 end
 
@@ -1925,7 +2144,7 @@ do
         end;
 
         ToggleRegion.InputBegan:Connect(function(Input)
-            if Input.UserInputType == Enum.UserInputType.MouseButton1 and not Library:MouseIsOverOpenedFrame() then
+            if Input.UserInputType == Enum.UserInputType.MouseButton1 and not Library:MouseIsOverOpenedFrame(ToggleRegion) then
                 Toggle:SetValue(not Toggle.Value) -- Why was it not like this from the start?
                 Library:AttemptSave();
             end;
@@ -2112,7 +2331,7 @@ do
         end;
 
         SliderInner.InputBegan:Connect(function(Input)
-            if Input.UserInputType == Enum.UserInputType.MouseButton1 and not Library:MouseIsOverOpenedFrame() then
+            if Input.UserInputType == Enum.UserInputType.MouseButton1 and not Library:MouseIsOverOpenedFrame(SliderInner) then
                 local mPos = Mouse.X;
                 local gPos = Fill.Size.X.Offset;
                 local Diff = mPos - (Fill.AbsolutePosition.X + gPos);
@@ -2529,7 +2748,7 @@ do
         end;
 
         DropdownOuter.InputBegan:Connect(function(Input)
-            if Input.UserInputType == Enum.UserInputType.MouseButton1 and not Library:MouseIsOverOpenedFrame() then
+            if Input.UserInputType == Enum.UserInputType.MouseButton1 and not Library:MouseIsOverOpenedFrame(DropdownOuter) then
                 if ListOuter.Visible then
                     Dropdown:CloseDropdown();
                 else
@@ -3618,6 +3837,272 @@ function Library:CreateWindow(...)
 
     return Window;
 end;
+
+
+function Library:CreatePopup(Config)
+    Config = Config or {};
+    if type(Config) == 'string' then
+        Config = { Title = Config };
+    end;
+
+    local Title = Config.Title or 'Popup';
+    local Size = typeof(Config.Size) == 'UDim2' and Config.Size or UDim2.fromOffset(360, 240);
+    local AutoShow = Config.AutoShow ~= false;
+    local Modal = Config.Modal ~= false;
+    local DestroyOnClose = Config.DestroyOnClose or false;
+    local BaseZ = Config.ZIndex or 50;
+
+    local Popup = {
+        Visible = false;
+        BaseZIndex = BaseZ + 5;
+    };
+
+    local PopupOuter = Library:Create('Frame', {
+        Name = 'LinoriaPopup_' .. Title;
+        AnchorPoint = Vector2.new(0.5, 0.5);
+        BackgroundColor3 = Color3.new(0, 0, 0);
+        BorderSizePixel = 0;
+        Position = typeof(Config.Position) == 'UDim2' and Config.Position or UDim2.fromScale(0.5, 0.5);
+        Size = Size;
+        Visible = false;
+        ZIndex = BaseZ;
+        Parent = ScreenGui;
+    });
+
+    Library:MakeDraggable(PopupOuter, 25);
+
+    local PopupInner = Library:Create('Frame', {
+        BackgroundColor3 = Library.MainColor;
+        BorderColor3 = Library.AccentColor;
+        BorderMode = Enum.BorderMode.Inset;
+        Position = UDim2.new(0, 1, 0, 1);
+        Size = UDim2.new(1, -2, 1, -2);
+        ZIndex = BaseZ + 1;
+        Parent = PopupOuter;
+    });
+
+    Library:AddToRegistry(PopupInner, {
+        BackgroundColor3 = 'MainColor';
+        BorderColor3 = 'AccentColor';
+    });
+
+    local TitleLabel = Library:CreateLabel({
+        Position = UDim2.new(0, 7, 0, 0);
+        Size = UDim2.new(1, -30, 0, 25);
+        Text = Title;
+        TextXAlignment = Enum.TextXAlignment.Left;
+        ZIndex = BaseZ + 2;
+        Parent = PopupInner;
+    });
+
+    local CloseBtn = Library:CreateLabel({
+        Position = UDim2.new(1, -22, 0, 0);
+        Size = UDim2.new(0, 20, 0, 25);
+        Text = 'X';
+        TextSize = 14;
+        ZIndex = BaseZ + 3;
+        Parent = PopupInner;
+    });
+
+    Library:OnHighlight(CloseBtn, CloseBtn,
+        { TextColor3 = 'RiskColor' },
+        { TextColor3 = 'FontColor' }
+    );
+
+    local BodyOuter = Library:Create('Frame', {
+        BackgroundColor3 = Library.BackgroundColor;
+        BorderColor3 = Library.OutlineColor;
+        Position = UDim2.new(0, 8, 0, 25);
+        Size = UDim2.new(1, -16, 1, -33);
+        ZIndex = BaseZ + 2;
+        Parent = PopupInner;
+    });
+
+    Library:AddToRegistry(BodyOuter, {
+        BackgroundColor3 = 'BackgroundColor';
+        BorderColor3 = 'OutlineColor';
+    });
+
+    local BodyInner = Library:Create('Frame', {
+        BackgroundColor3 = Library.BackgroundColor;
+        BorderColor3 = Color3.new(0, 0, 0);
+        BorderMode = Enum.BorderMode.Inset;
+        Size = UDim2.new(1, 0, 1, 0);
+        ZIndex = BaseZ + 3;
+        Parent = BodyOuter;
+    });
+
+    Library:AddToRegistry(BodyInner, {
+        BackgroundColor3 = 'BackgroundColor';
+    });
+
+    local Container = Library:Create('Frame', {
+        BackgroundTransparency = 1;
+        Position = UDim2.new(0, 6, 0, 6);
+        Size = UDim2.new(1, -8, 1, -12);
+        ZIndex = BaseZ + 4;
+        Parent = BodyInner;
+    });
+
+    local Layout = Library:Create('UIListLayout', {
+        FillDirection = Enum.FillDirection.Vertical;
+        SortOrder = Enum.SortOrder.LayoutOrder;
+        Parent = Container;
+    });
+
+    function Popup:Resize()
+        if Config.AutoResize then
+            local ContentH = Layout.AbsoluteContentSize.Y;
+            PopupOuter.Size = UDim2.new(Size.X.Scale, Size.X.Offset, 0, 25 + 8 + 12 + ContentH);
+        end;
+    end;
+
+    function Popup:Show()
+        PopupOuter.Visible = true;
+        Popup.Visible = true;
+        if Modal then
+            Library.OpenedFrames[PopupOuter] = true;
+        end;
+    end;
+
+    function Popup:Hide()
+        PopupOuter.Visible = false;
+        Popup.Visible = false;
+        Library.OpenedFrames[PopupOuter] = nil;
+        if DestroyOnClose then
+            Popup:Destroy();
+        end;
+    end;
+
+    function Popup:Destroy()
+        Library.OpenedFrames[PopupOuter] = nil;
+        PopupOuter:Destroy();
+    end;
+
+    function Popup:SetTitle(NewTitle)
+        TitleLabel.Text = NewTitle;
+    end;
+
+    -- Helper for side-by-side Done / Cancel buttons at the bottom of a popup
+    function Popup:AddActionButtons(DoneText, CancelText, OnDone, OnCancel)
+        local Row = Library:Create('Frame', {
+            BackgroundTransparency = 1;
+            Size = UDim2.new(1, -4, 0, 22);
+            ZIndex = BaseZ + 5;
+            Parent = Container;
+        });
+
+        local function MakeActionBtn(Text, Pos, BtnSize, AccentBorder, Callback)
+            local Outer = Library:Create('Frame', {
+                BackgroundColor3 = Color3.new(0, 0, 0);
+                BorderColor3 = Color3.new(0, 0, 0);
+                Position = Pos;
+                Size = BtnSize;
+                ZIndex = BaseZ + 5;
+                Parent = Row;
+            });
+
+            local Inner = Library:Create('Frame', {
+                BackgroundColor3 = Library.MainColor;
+                BorderColor3 = AccentBorder and Library.AccentColor or Library.OutlineColor;
+                BorderMode = Enum.BorderMode.Inset;
+                Size = UDim2.new(1, 0, 1, 0);
+                ZIndex = BaseZ + 6;
+                Parent = Outer;
+            });
+
+            local Lbl = Library:CreateLabel({
+                Size = UDim2.new(1, 0, 1, 0);
+                TextSize = 14;
+                Text = Text;
+                ZIndex = BaseZ + 7;
+                Parent = Inner;
+            });
+
+            Library:Create('UIGradient', {
+                Color = ColorSequence.new({
+                    ColorSequenceKeypoint.new(0, Color3.new(1, 1, 1)),
+                    ColorSequenceKeypoint.new(1, Color3.fromRGB(212, 212, 212))
+                });
+                Rotation = 90;
+                Parent = Inner;
+            });
+
+            Library:AddToRegistry(Inner, {
+                BackgroundColor3 = 'MainColor';
+                BorderColor3 = AccentBorder and 'AccentColor' or 'OutlineColor';
+            });
+
+            Library:OnHighlight(Outer, Outer,
+                { BorderColor3 = 'AccentColor' },
+                { BorderColor3 = 'Black' }
+            );
+
+            Outer.InputBegan:Connect(function(Input)
+                if Input.UserInputType == Enum.UserInputType.MouseButton1 then
+                    Library:SafeCallback(Callback);
+                end;
+            end);
+
+            return Outer, Lbl;
+        end;
+
+        local DoneBtn = MakeActionBtn(
+            DoneText or 'Done',
+            UDim2.new(0, 0, 0, 0),
+            UDim2.new(0.5, -3, 0, 20),
+            true,
+            function()
+                if OnDone then OnDone() end;
+            end
+        );
+
+        local CancelBtn = MakeActionBtn(
+            CancelText or 'Cancel',
+            UDim2.new(0.5, 3, 0, 0),
+            UDim2.new(0.5, -3, 0, 20),
+            false,
+            function()
+                if OnCancel then
+                    OnCancel();
+                else
+                    Popup:Hide();
+                end;
+            end
+        );
+
+        Popup:AddBlank(4);
+        Popup:Resize();
+
+        return DoneBtn, CancelBtn;
+    end;
+
+    CloseBtn.InputBegan:Connect(function(Input)
+        if Input.UserInputType == Enum.UserInputType.MouseButton1 then
+            if Config.OnCancel then
+                Library:SafeCallback(Config.OnCancel);
+            else
+                Popup:Hide();
+            end;
+        end;
+    end);
+
+    Popup.Container = Container;
+    Popup.Holder = PopupOuter;
+    setmetatable(Popup, BaseGroupbox);
+
+    Popup:AddBlank(2);
+    Popup:Resize();
+
+    if AutoShow then
+        Popup:Show();
+    end;
+
+    return Popup;
+end;
+
+Library.CreateSubWindow = Library.CreatePopup;
+Library.CreateModal = Library.CreatePopup;
 
 local function OnPlayerChange()
     local PlayerList = GetPlayersString();
